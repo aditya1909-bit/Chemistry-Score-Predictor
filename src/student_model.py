@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import os as os
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
@@ -12,7 +13,8 @@ from xgboost import XGBRegressor
 from sklearn.metrics import mean_squared_error
 
 # Load the dataset
-df = pd.read_csv("student_data.csv")
+data_path = os.path.join(os.path.dirname(__file__), "..", "data", "student_data.csv")
+df = pd.read_csv(data_path)
 
 # Split into two sets: those who took the D test (DUCK TAKEN == 1) and those who didn't (DUCK TAKEN == 0)
 df_train = df[df["DUCK TAKEN"] == 1].copy()   # for training and model evaluation
