@@ -1,46 +1,55 @@
+import os
 import pandas as pd
 import numpy as np
-import os as os
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.multioutput import MultiOutputRegressor
-from sklearn.neural_network import MLPRegressor
-from xgboost import XGBRegressor
-from sklearn.metrics import mean_squared_error
+from sklearn.multioutput import MultiOutputClassifier
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import hamming_loss
 
-# Load the dataset
+# Build the file path to your data file in the data folder
 data_path = os.path.join(os.path.dirname(__file__), "..", "data", "student_data.csv")
 df = pd.read_csv(data_path)
 
-# Split into two sets: those who took the D test (DUCK TAKEN == 1) and those who didn't (DUCK TAKEN == 0)
-df_train = df[df["DUCK TAKEN"] == 1].copy()   # for training and model evaluation
-df_predict = df[df["DUCK TAKEN"] == 0].copy()   # for later prediction
+# Split into two sets:
+# - df_train: Students who took the D test (DUCK TAKEN == 1)
+# - df_predict: Students who have not taken the D test (DUCK TAKEN == 0)
+df_train = df[df["DUCK TAKEN"] == 1].copy()
+df_predict = df[df["DUCK TAKEN"] == 0].copy()
 
-# For training data, drop the identifier and DUCK TAKEN columns
+# Clean up column names: remove extra spaces and colons
+df_train.columns = df_train.columns.str.strip().str.replace(":", "", regex=False)
+df_predict.columns = df_predict.columns.str.strip().str.replace(":", "", regex=False)
+
+# For training data, drop identifier columns that won't be used as features.
 df_train.drop(columns=["STUDENT ID", "DUCK TAKEN"], inplace=True)
 
-# Identify columns:
-# D test columns are our multi-output targets.
+# Define column groups
+# D columns: our binary targets (values between 0 and 1)
 d_cols = [col for col in df_train.columns if col.startswith("D-")]
-# E test columns (there are three groups: E0, E1, E2)
+
+# E test columns (E0, E1, E2) will be used as part of the features.
 e_cols = [col for col in df_train.columns if col.startswith("E0-") or 
           col.startswith("E1-") or col.startswith("E2-")]
+
 # Other numerical columns
 num_cols = ["HS GPA", "SAT MATH", "SAT ENG", "SAT", "EMORY GPA", "CHEM GPA"]
-# Categorical columns
-cat_cols = ["UNBOUND:", "ETHNICITY", "GENDER"]
 
-# Define features and labels for training
+# Categorical columns
+cat_cols = ["UNBOUND", "ETHNICITY", "GENDER"]
+
+# Prepare features (X) and multi-output binary labels (y)
 X = df_train[cat_cols + num_cols + e_cols]
-y = df_train[d_cols]  # Multi-output targets
+y = df_train[d_cols]
 
 # Preprocessing pipeline:
-# - Numeric: Impute missing values (using mean) and scale.
-# - Categorical: Impute missing (most frequent) and one-hot encode.
+#  - Numeric: Impute missing values (mean) and scale.
+#  - Categorical: Impute missing (most frequent) and one-hot encode.
 preprocessor = ColumnTransformer(
     transformers=[
         ("num", Pipeline([
@@ -54,45 +63,59 @@ preprocessor = ColumnTransformer(
     ]
 )
 
-# Define three different models using MultiOutputRegressor
+# Define multi-output classifiers:
 models = {
-    "RandomForest": MultiOutputRegressor(RandomForestRegressor(n_estimators=100, random_state=42)),
-    "XGBoost": MultiOutputRegressor(XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42)),
-    "NeuralNetwork": MultiOutputRegressor(MLPRegressor(hidden_layer_sizes=(128, 64), max_iter=500, random_state=42))
+    "RandomForest": MultiOutputClassifier(RandomForestClassifier(n_estimators=100, random_state=42)),
+    "XGBoost": MultiOutputClassifier(
+        XGBClassifier(n_estimators=100, learning_rate=0.1, random_state=42,
+                      use_label_encoder=False, eval_metric='logloss')
+    ),
+    "NeuralNetwork": MultiOutputClassifier(
+        MLPClassifier(hidden_layer_sizes=(128, 64), max_iter=500, random_state=42)
+    )
 }
 
-# Split training data into train and validation sets
+# Split training data for evaluation (e.g., 80% train, 20% validation)
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Loop through each model, train, evaluate, and then predict for students who didn't take the D test.
+# Loop through each model, train, evaluate, and then predict on df_predict
 for name, model in models.items():
     print(f"\nTraining {name}...")
+    # Create a pipeline that includes preprocessing and the classifier
     pipeline = Pipeline(steps=[
         ("preprocessor", preprocessor),
-        ("regressor", model)
+        ("classifier", model)
     ])
     
-    # Train the pipeline
+    # Train the model
     pipeline.fit(X_train, y_train)
     
-    # Validate the model
-    y_pred_val = pipeline.predict(X_test)
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred_val))
-    print(f"{name} RMSE on validation set: {rmse:.2f}")
+    # Evaluate the model on the validation set:
+    # Subset accuracy (all labels must be correct)
+    subset_accuracy = pipeline.score(X_test, y_test)
     
-    # Prepare the prediction dataset:
-    # For df_predict, we need the same features.
-    # Keep STUDENT ID for reference and drop DUCK TAKEN if present.
+    # Predict on validation set for alternative metrics:
+    y_pred_val = pipeline.predict(X_test)
+    # Hamming loss: fraction of labels mispredicted
+    ham_loss = hamming_loss(y_test, y_pred_val)
+    # Per-label accuracy (average across all labels)
+    per_label_accuracy = (y_test == y_pred_val).mean().mean()
+    
+    print(f"{name} subset accuracy on validation set: {subset_accuracy:.2f}")
+    print(f"{name} Hamming loss on validation set: {ham_loss:.2f}")
+    print(f"{name} average per-label accuracy: {per_label_accuracy:.2f}")
+    
+    # Prepare features for prediction on students who haven't taken the D test.
     predict_features = df_predict[cat_cols + num_cols + e_cols]
     
-    # Predict D test scores for students who haven't taken the test
+    # Predict D test outcomes (binary outputs)
     y_pred = pipeline.predict(predict_features)
     
-    # Create a DataFrame with predictions; retain the STUDENT ID for identification.
+    # Build a DataFrame for the predictions and include STUDENT ID for reference.
     pred_df = pd.DataFrame(y_pred, columns=d_cols)
     pred_df.insert(0, "STUDENT ID", df_predict["STUDENT ID"].values)
     
-    # Save predictions to a CSV file
-    output_filename = f"predictions_{name}.csv"
-    pred_df.to_csv(output_filename, index=False)
-    print(f"Predictions saved for {name} in '{output_filename}'")
+    # Save the predictions CSV into the data folder (data/ is git-ignored)
+    output_path = os.path.join(os.path.dirname(__file__), "..", "data", f"predictions_{name}.csv")
+    pred_df.to_csv(output_path, index=False)
+    print(f"Predictions saved for {name} in '{output_path}'")
