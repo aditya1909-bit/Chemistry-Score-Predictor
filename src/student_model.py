@@ -11,7 +11,9 @@ from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import hamming_loss
+import warnings
 
+warnings.filterwarnings("ignore", category=UserWarning, module="xgboost")
 # Build the file path to your data file in the data folder
 data_path = os.path.join(os.path.dirname(__file__), "..", "data", "student_data.csv")
 df = pd.read_csv(data_path)

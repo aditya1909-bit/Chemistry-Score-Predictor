@@ -10,7 +10,7 @@ from sklearn.multioutput import MultiOutputClassifier
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 from sklearn.neural_network import MLPClassifier
-from sklearn.metrics import hamming_loss
+from sklearn.metrics import hamming_loss, make_scorer
 
 # --- Data Loading ---
 data_path = os.path.join(os.path.dirname(__file__), "..", "data", "student_data.csv")
@@ -61,6 +61,13 @@ preprocessor = ColumnTransformer(
     ]
 )
 
+# --- Define a Custom Scorer for Average Per-Label Accuracy ---
+def per_label_accuracy_score(y_true, y_pred):
+    # Compute average per-label accuracy
+    return (y_true == y_pred).mean().mean()
+
+scorer = make_scorer(per_label_accuracy_score, greater_is_better=True)
+
 # --- Define Models and Parameter Grids ---
 models = {
     "RandomForest": MultiOutputClassifier(RandomForestClassifier(random_state=42)),
@@ -68,22 +75,23 @@ models = {
         XGBClassifier(random_state=42, use_label_encoder=False, eval_metric="logloss")
     ),
     "NeuralNetwork": MultiOutputClassifier(
-        MLPClassifier(max_iter=500, random_state=42)
+        MLPClassifier(random_state=42)
     )
 }
 
 param_grids = {
     "RandomForest": {
-         'classifier__estimator__n_estimators': [100, 200],
-         'classifier__estimator__max_depth': [None, 10, 20]
+         'classifier__estimator__n_estimators': [200, 300],
+         'classifier__estimator__max_depth': [None, 20, 30]
     },
     "XGBoost": {
-         'classifier__estimator__n_estimators': [100, 200],
-         'classifier__estimator__max_depth': [3, 6, 10]
+         'classifier__estimator__n_estimators': [200, 300],
+         'classifier__estimator__max_depth': [3, 6, 10, 15]
     },
     "NeuralNetwork": {
-         'classifier__estimator__hidden_layer_sizes': [(128, 64), (256, 128)],
-         'classifier__estimator__alpha': [0.0001, 0.001]
+         'classifier__estimator__hidden_layer_sizes': [(128, 64), (256, 128), (256, 128, 64)],
+         'classifier__estimator__alpha': [0.0001, 0.001],
+         'classifier__estimator__max_iter': [500, 800]
     }
 }
 
@@ -110,12 +118,12 @@ for name, model in models.items():
         ("classifier", model)
     ])
     
-    # Set up GridSearchCV for hyperparameter tuning.
+    # Set up GridSearchCV for hyperparameter tuning using the custom scorer.
     grid = GridSearchCV(
         pipeline,
         param_grid=param_grids[name],
         cv=3,  # 3-fold cross-validation
-        scoring="accuracy",  # scoring here is for overall accuracy (subset accuracy)
+        scoring=scorer,
         verbose=0
     )
     
@@ -128,7 +136,7 @@ for name, model in models.items():
     subset_accuracy = best_pipeline.score(X_test, y_test)
     y_pred_val = best_pipeline.predict(X_test)
     ham_loss = hamming_loss(y_test, y_pred_val)
-    per_label_accuracy = (y_test == y_pred_val).mean().mean()
+    per_label_accuracy = per_label_accuracy_score(y_test, y_pred_val)
     
     print(f"{name} subset accuracy on validation set: {subset_accuracy:.2f}")
     print(f"{name} Hamming loss on validation set: {ham_loss:.2f}")
@@ -140,7 +148,6 @@ for name, model in models.items():
     print(error_df.head(5).to_string(index=False))
     
     # --- Prediction for Students Who Haven't Taken the D Test ---
-    # Use the same preprocessor on df_predict.
     predict_features = df_predict[cat_cols + num_cols + e_cols]
     y_pred = best_pipeline.predict(predict_features)
     
@@ -152,3 +159,10 @@ for name, model in models.items():
     output_path = os.path.join(os.path.dirname(__file__), "..", "data", f"predictions_{name}.csv")
     pred_df.to_csv(output_path, index=False)
     print(f"Predictions saved for {name} in '{output_path}'")
+
+# --- Compute and Output Question Difficulty Ranking ---
+# Calculate difficulty as the proportion of 0's (i.e., 1 - proportion of 1's) for each question in the training data.
+difficulty = 1 - df_train[d_cols].mean()
+difficulty = difficulty.sort_values(ascending=False)
+print("\nQuestions ranked by difficulty (most difficult at the top):")
+print(difficulty.to_string())
