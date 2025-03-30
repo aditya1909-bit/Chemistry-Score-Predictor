@@ -111,6 +111,39 @@ output_path_overall = os.path.join(os.path.dirname(__file__), "..", "data", "pre
 pred_df.to_csv(output_path_overall, index=False)
 print("Overall predictions saved to:", output_path_overall)
 
+# --- Compute Overall Average Predicted Confidence for Each Group ---
+mask_unbound = df_predict["UNBOUND"] == "U"
+mask_bound = df_predict["UNBOUND"] != "U"
+
+predict_features_unbound = df_predict.loc[mask_unbound, cat_cols + num_cols + e_cols]
+predict_features_bound = df_predict.loc[mask_bound, cat_cols + num_cols + e_cols]
+
+y_pred_unbound = best_pipeline.predict(predict_features_unbound)
+y_pred_bound = best_pipeline.predict(predict_features_bound)
+
+y_pred_proba_list_unbound = best_pipeline.predict_proba(predict_features_unbound)
+y_pred_proba_list_bound = best_pipeline.predict_proba(predict_features_bound)
+
+confidences_unbound = []
+for j in range(len(d_cols)):
+    for i in range(len(y_pred_unbound)):
+        pred = y_pred_unbound[i, j]
+        prob = y_pred_proba_list_unbound[j][i, int(pred)]
+        confidences_unbound.append(prob)
+overall_confidence_unbound = np.mean(confidences_unbound)
+
+confidences_bound = []
+for j in range(len(d_cols)):
+    for i in range(len(y_pred_bound)):
+        pred = y_pred_bound[i, j]
+        prob = y_pred_proba_list_bound[j][i, int(pred)]
+        confidences_bound.append(prob)
+overall_confidence_bound = np.mean(confidences_bound)
+
+print("\nOverall average predicted confidence:")
+print("Unbound group: {:.2f}".format(overall_confidence_unbound))
+print("Non-unbound group: {:.2f}".format(overall_confidence_bound))
+
 # --- Split Predictions by UNBOUND Group ---
 pred_unbound = pred_df[pred_df["UNBOUND"] == "U"].copy()
 pred_bound = pred_df[pred_df["UNBOUND"] != "U"].copy()
