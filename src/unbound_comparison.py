@@ -10,6 +10,9 @@ from sklearn.multioutput import MultiOutputClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import make_scorer, hamming_loss
 
+
+print("Running unbound_comparison.py")
+
 # --- Custom Scorer ---
 def per_label_accuracy_score(y_true, y_pred):
     return (y_true == y_pred).mean().mean()
@@ -178,3 +181,5 @@ pred_unbound.to_csv(output_path_unbound, index=False)
 pred_bound.to_csv(output_path_bound, index=False)
 print("\nPredictions for unbound saved to:", output_path_unbound)
 print("Predictions for non-unbound saved to:", output_path_bound)
+
+print("unbound_comparison.py completed successfully.")
