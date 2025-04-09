@@ -50,114 +50,21 @@ num_cols = ["HS GPA", "SAT MATH", "SAT ENG", "SAT", "EMORY GPA", "CHEM GPA"]
 # Categorical columns (including UNBOUND for later grouping)
 cat_cols = ["UNBOUND", "ETHNICITY", "GENDER"]
 
-# --- Prepare Features and Targets ---
-X = df_train[cat_cols + num_cols + e_cols]
-y = df_train[d_cols]
-
-# --- Preprocessing Pipeline ---
-preprocessor = ColumnTransformer(
-    transformers=[
-        ("num", Pipeline([
-            ("imputer", SimpleImputer(strategy="mean")),
-            ("scaler", StandardScaler())
-        ]), num_cols + e_cols),
-        ("cat", Pipeline([
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore"))
-        ]), cat_cols)
-    ]
-)
-
-# --- Model Training using RandomForest with GridSearchCV ---
-pipeline = Pipeline(steps=[
-    ("preprocessor", preprocessor),
-    ("classifier", MultiOutputClassifier(RandomForestClassifier(random_state=42)))
-])
-
-param_grid = {
-    'classifier__estimator__n_estimators': [200, 300],
-    'classifier__estimator__max_depth': [None, 20, 30]
-}
-
-# Split training data into training and validation sets
-X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-
-grid = GridSearchCV(
-    pipeline,
-    param_grid=param_grid,
-    cv=3,
-    scoring=scorer,
-    verbose=0
-)
-grid.fit(X_train, y_train)
-best_pipeline = grid.best_estimator_
-print("Best parameters:", grid.best_params_)
-
-# Evaluate on validation set
-y_pred_val = best_pipeline.predict(X_val)
-val_per_label_accuracy = per_label_accuracy_score(y_val, y_pred_val)
-print("Validation average per-label accuracy: {:.2f}".format(val_per_label_accuracy))
-
-# --- Predictions for Unbound Comparison ---
-# Use best_pipeline to predict D test outcomes for students who haven't taken the test.
-# We need the UNBOUND column for grouping, so we keep it.
-predict_features = df_predict[cat_cols + num_cols + e_cols]
-y_pred = best_pipeline.predict(predict_features)
-
-# Build a predictions DataFrame with STUDENT ID and UNBOUND column
-pred_df = pd.DataFrame(y_pred, columns=d_cols)
-pred_df.insert(0, "STUDENT ID", df_predict["STUDENT ID"].values)
-pred_df["UNBOUND"] = df_predict["UNBOUND"].values
-
-# Save overall predictions file (will be ignored by git if data/ is in .gitignore)
-output_path_overall = os.path.join(os.path.dirname(__file__), "..", "data", "predictions_overall.csv")
-pred_df.to_csv(output_path_overall, index=False)
-print("Overall predictions saved to:", output_path_overall)
-
-# --- Compute Overall Average Predicted Confidence for Each Group ---
-mask_unbound = df_predict["UNBOUND"] == "U"
-mask_bound = df_predict["UNBOUND"] != "U"
-
-predict_features_unbound = df_predict.loc[mask_unbound, cat_cols + num_cols + e_cols]
-predict_features_bound = df_predict.loc[mask_bound, cat_cols + num_cols + e_cols]
-
-y_pred_unbound = best_pipeline.predict(predict_features_unbound)
-y_pred_bound = best_pipeline.predict(predict_features_bound)
-
-y_pred_proba_list_unbound = best_pipeline.predict_proba(predict_features_unbound)
-y_pred_proba_list_bound = best_pipeline.predict_proba(predict_features_bound)
-
-confidences_unbound = []
-for j in range(len(d_cols)):
-    for i in range(len(y_pred_unbound)):
-        pred = y_pred_unbound[i, j]
-        prob = y_pred_proba_list_unbound[j][i, int(pred)]
-        confidences_unbound.append(prob)
-overall_confidence_unbound = np.mean(confidences_unbound)
-
-confidences_bound = []
-for j in range(len(d_cols)):
-    for i in range(len(y_pred_bound)):
-        pred = y_pred_bound[i, j]
-        prob = y_pred_proba_list_bound[j][i, int(pred)]
-        confidences_bound.append(prob)
-overall_confidence_bound = np.mean(confidences_bound)
-
-print("\nOverall average predicted confidence:")
-print("Unbound group: {:.2f}".format(overall_confidence_unbound))
-print("Non-unbound group: {:.2f}".format(overall_confidence_bound))
-
-# --- Split Predictions by UNBOUND Group ---
-pred_unbound = pred_df[pred_df["UNBOUND"] == "U"].copy()
-pred_bound = pred_df[pred_df["UNBOUND"] != "U"].copy()
+# --- Load Predictions from CSV Files for Unbound Comparison ---
+output_path_bound_rf = os.path.join(os.path.dirname(__file__), "..", "data", "predictions_bound_RandomForest.csv")
+output_path_unbound_rf = os.path.join(os.path.dirname(__file__), "..", "data", "predictions_unbound_RandomForest.csv")
+pred_bound = pd.read_csv(output_path_bound_rf)
+pred_unbound = pd.read_csv(output_path_unbound_rf)
+pred_df = pd.concat([pred_bound, pred_unbound], ignore_index=True)
+print("Loaded predictions from predictions_bound_RandomForest.csv and predictions_unbound_RandomForest.csv")
 
 # Compute overall average predicted score for each group (average across all D questions)
 overall_avg_unbound = pred_unbound[d_cols].mean().mean()
 overall_avg_bound = pred_bound[d_cols].mean().mean()
 
 print("\nOverall average predicted score:")
-print("Unbound group: {:.2f}".format(overall_avg_unbound))
-print("Non-unbound group: {:.2f}".format(overall_avg_bound))
+print("Unbound group: {:.2f}".format(pred_unbound[d_cols].mean().mean()))
+print("Non-unbound group: {:.2f}".format(pred_bound[d_cols].mean().mean()))
 
 # For each group, rank questions by difficulty.
 # Difficulty is defined as: 1 - (average predicted score for the question).
@@ -174,12 +81,12 @@ print(difficulty_unbound.to_string())
 print("\nQuestions that non-unbound students would generally get wrong (ranked by difficulty):")
 print(difficulty_bound.to_string())
 
-# Save group-specific predictions
-output_path_unbound = os.path.join(os.path.dirname(__file__), "..", "data", "predictions_unbound.csv")
-output_path_bound = os.path.join(os.path.dirname(__file__), "..", "data", "predictions_bound.csv")
-pred_unbound.to_csv(output_path_unbound, index=False)
-pred_bound.to_csv(output_path_bound, index=False)
-print("\nPredictions for unbound saved to:", output_path_unbound)
-print("Predictions for non-unbound saved to:", output_path_bound)
+# Save group-specific predictions (if needed)
+output_path_unbound_new = os.path.join(os.path.dirname(__file__), "..", "data", "predictions_unbound_analysis.csv")
+output_path_bound_new = os.path.join(os.path.dirname(__file__), "..", "data", "predictions_bound_analysis.csv")
+pred_unbound.to_csv(output_path_unbound_new, index=False)
+pred_bound.to_csv(output_path_bound_new, index=False)
+print("\nPredictions for unbound saved to:", output_path_unbound_new)
+print("Predictions for non-unbound saved to:", output_path_bound_new)
 
 print("unbound_comparison.py completed successfully.")
