@@ -11,6 +11,7 @@ from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import hamming_loss, make_scorer
+from scipy.stats import sem, t
 
 print("\nRunning student_model3.py...")
 
@@ -180,6 +181,12 @@ for name, model in models.items():
     print(f"{name} subset accuracy on validation set: {subset_accuracy:.2f}")
     print(f"{name} Hamming loss on validation set: {ham_loss:.2f}")
     print(f"{name} average per-label accuracy: {per_label_accuracy:.2f}")
+
+    # Compute standard error and 95% confidence interval for per-label accuracy
+    accuracies = (y_test.values == y_pred_val).mean(axis=0)
+    std_err = sem(accuracies)
+    conf_int = t.interval(0.95, len(accuracies)-1, loc=accuracies.mean(), scale=std_err)
+    print(f"{name} average per-label accuracy 95% CI: ({conf_int[0]:.4f}, {conf_int[1]:.4f})")
     
     if per_label_accuracy > best_accuracy:
         best_accuracy = per_label_accuracy
@@ -218,9 +225,11 @@ if best_pipeline_final is not None:
     # Build DataFrames for predictions
     pred_bound_df = pd.DataFrame(y_pred_bound, columns=d_cols)
     pred_bound_df.insert(0, "STUDENT ID", df_predict_bound["STUDENT ID"].values)
-    
+    pred_bound_df.insert(1, "UNBOUND", df_predict_bound["UNBOUND"].values)
+
     pred_unbound_df = pd.DataFrame(y_pred_unbound, columns=d_cols)
     pred_unbound_df.insert(0, "STUDENT ID", df_predict_unbound["STUDENT ID"].values)
+    pred_unbound_df.insert(1, "UNBOUND", df_predict_unbound["UNBOUND"].values)
     
     # Save predictions CSV files into the data folder
     output_path_bound = os.path.join(os.path.dirname(__file__), "..", "data", f"predictions_bound_{best_name}.csv")
