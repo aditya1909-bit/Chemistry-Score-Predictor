@@ -35,6 +35,7 @@ df["Class GPA"] = df[class_cols].mean(axis=1, skipna=True)
 
 # Split into training and prediction sets
 df_train = df[df["DUCK TAKEN"] == 1].copy()
+print(f"Initial number of rows in training set: {len(df_train)}")
 df_predict = df[df["DUCK TAKEN"] == 0].copy()
 
 # Define duck question columns (assumes columns starting with "D-")
@@ -61,25 +62,36 @@ def plot_duck_scores_comparison(pred_unbound, pred_bound, d_cols):
     plt.tight_layout()
     plt.show()
 
-# Load predicted results and display the duck scores comparison graph
-pred_path = os.path.join(os.path.dirname(__file__), "..", "data", "predictions_overall_RandomForest.csv")
-if os.path.exists(pred_path):
-    pred_df = pd.read_csv(pred_path)
-    
-    # Split the predictions by UNBOUND status
-    pred_unbound = pred_df[pred_df["UNBOUND"] == "U"]
-    pred_bound = pred_df[pred_df["UNBOUND"] != "U"]
-    
-    # Plot the grouped bar chart comparing duck scores for each question
-    plot_duck_scores_comparison(pred_unbound, pred_bound, d_cols)
-    
-    # Optionally, print overall average scores for both groups
-    overall_unbound = pred_unbound[d_cols].mean().mean()
-    overall_bound = pred_bound[d_cols].mean().mean()
-    print(f"Overall average duck score (Unbound): {overall_unbound:.2f}")
-    print(f"Overall average duck score (Non-Unbound): {overall_bound:.2f}")
+# Load separate unbound and bound predictions and compare
+pred_unbound_path = os.path.join(os.path.dirname(__file__), "..", "data", "predictions_unbound_RandomForest.csv")
+pred_bound_path = os.path.join(os.path.dirname(__file__), "..", "data", "predictions_bound_RandomForest.csv")
+if os.path.exists(pred_unbound_path) and os.path.exists(pred_bound_path):
+    pred_unbound = pd.read_csv(pred_unbound_path)
+    print(f"Loaded {len(pred_unbound)} rows in unbound predictions")
+    pred_bound = pd.read_csv(pred_bound_path)
+    print(f"Loaded {len(pred_bound)} rows in bound predictions")
+
+    # Impute missing scores with column means, drop entirely empty columns
+    unbound_means = pred_unbound[d_cols].mean()
+    pred_unbound[d_cols] = pred_unbound[d_cols].fillna(unbound_means)
+    valid_d_unbound = [col for col in d_cols if not np.isnan(unbound_means[col])]
+
+    bound_means = pred_bound[d_cols].mean()
+    pred_bound[d_cols] = pred_bound[d_cols].fillna(bound_means)
+    valid_d_bound = [col for col in d_cols if not np.isnan(bound_means[col])]
+
+    # Find questions present in both sets
+    common_d_cols = [col for col in valid_d_unbound if col in valid_d_bound]
+    if common_d_cols:
+        plot_duck_scores_comparison(pred_unbound, pred_bound, common_d_cols)
+        overall_unbound = pred_unbound[common_d_cols].mean().mean()
+        overall_bound = pred_bound[common_d_cols].mean().mean()
+        print(f"Overall average duck score (Unbound): {overall_unbound:.2f}")
+        print(f"Overall average duck score (Non-Unbound): {overall_bound:.2f}")
+    else:
+        print("No common duck question columns available after dropping empty ones.")
 else:
-    print("Predictions file not found. Skipping duck scores comparison visualization.")
+    print("Unbound or bound predictions files not found. Skipping duck scores comparison visualization.")
 
 # Use students with actual duck scores to compute correlation
 numeric_df = df_train.select_dtypes(include=[np.number])
@@ -109,6 +121,13 @@ df["OverallDuckScore"] = df[d_cols].mean(axis=1)
 all_numeric = df.select_dtypes(include=['number'])
 predictor_cols = [col for col in all_numeric.columns if col not in d_cols and col != "OverallDuckScore" and col != "DUCK TAKEN" and all_numeric[col].notna().mean() >= 0.7]
 
+# Prepare full training set by imputing missing values instead of dropping rows
+df_valid = df_train.copy()
+# Impute missing predictor values with column means
+df_valid[predictor_cols] = df_valid[predictor_cols].fillna(df_valid[predictor_cols].mean())
+# Compute target as mean duck question score (skipping NaNs)
+y = df_valid[d_cols].mean(axis=1, skipna=True)
+
 # Ensure there is at least one predictor column
 if len(predictor_cols) > 0:
     # Use only students who have not taken the duck
@@ -133,8 +152,6 @@ if len(predictor_cols) > 0:
 
     # Fill remaining NaNs in predictor columns with column means
     df_valid[predictor_cols] = df_valid[predictor_cols].fillna(df_valid[predictor_cols].mean())
-
-    y = df_valid[d_cols].mean(axis=1)
 
     if df_valid.empty:
         print("No students with complete predictor data for regression analysis.")
@@ -169,43 +186,40 @@ if len(predictor_cols) > 0:
         plt.tight_layout()
         plt.show()
 
-        print("Regression analysis complete. The chart displays the standardized impact of each predictor on the overall duck score.")
+        #-----------------------------------------------------------------------------  
+        # Predict duck score for all students (imputing missing predictors and scaling)
+        df_all = df.copy()
+        # Impute missing predictor values using the means computed on df_valid
+        train_means = df_valid[predictor_cols].mean()
+        df_all[predictor_cols] = df_all[predictor_cols].fillna(train_means)
 
-        # Predict duck score using the regression model
-        df_valid["PredictedDuckScore"] = model.predict(X_scaled)
+        # Scale predictors using the same scaler
+        X_all_scaled = scaler.transform(df_all[predictor_cols])
+        df_all["PredictedDuckScore"] = model.predict(X_all_scaled)
 
-        # Check UNBOUND group distribution and counts
-        print("UNBOUND value counts (including NaN):")
-        print(df_valid["UNBOUND"].value_counts(dropna=False))
+        # Compare predicted distributions for all students by UNBOUND status
+        unbound_pred_all = df_all[df_all["UNBOUND"] == "U"]["PredictedDuckScore"]
+        bound_pred_all = df_all[df_all["UNBOUND"] != "U"]["PredictedDuckScore"]
 
-        unbound_scores = df_valid[df_valid["UNBOUND"] == "U"]["PredictedDuckScore"]
-        bound_scores = df_valid[df_valid["UNBOUND"].notna() & (df_valid["UNBOUND"] != "U")]["PredictedDuckScore"]
+        print(f"Total students with predictions: {len(df_all)}")
+        print(f"Unbound predictions count: {len(unbound_pred_all)}")
+        print(f"Non-Unbound predictions count: {len(bound_pred_all)}")
 
-        print("Unbound count:", len(unbound_scores))
-        print("Non-Unbound count:", len(bound_scores))
+        # Plot histogram of predicted duck scores for all students
+        plt.figure(figsize=(10, 6))
+        plt.hist(unbound_pred_all, bins=20, alpha=0.6, label="Unbound", density=True)
+        plt.hist(bound_pred_all, bins=20, alpha=0.6, label="Non-Unbound", density=True)
+        plt.title("Distribution of Predicted Duck Scores by UNBOUND Status (All Students)")
+        plt.xlabel("Predicted Duck Score")
+        plt.ylabel("Density")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
 
-        # Plot histogram of predicted duck scores for Unbound and Non-Unbound groups
-        if "UNBOUND" in df_valid.columns:
-            plt.figure(figsize=(10, 6))
-            plt.hist(unbound_scores, bins=20, alpha=0.6, label="Unbound", color="blue", density=True)
-            plt.hist(bound_scores, bins=20, alpha=0.6, label="Non-Unbound", color="orange", density=True)
-
-            plt.title("Distribution of Predicted Duck Scores by UNBOUND Status")
-            plt.xlabel("Predicted Duck Score")
-            plt.ylabel("Density")
-            plt.legend()
-            plt.grid(True)
-            plt.tight_layout()
-            plt.show()
-        
-        print("Predicted duck score range:")
-        print(df_valid["PredictedDuckScore"].describe())
-
-        # Compare predicted duck scores by UNBOUND status
-        if "UNBOUND" in df_valid.columns:
-            unbound_pred = df_valid[df_valid["UNBOUND"] == "U"]["PredictedDuckScore"].mean()
-            bound_pred = df_valid[df_valid["UNBOUND"] != "U"]["PredictedDuckScore"].mean()
-            print(f"Predicted average duck score (Unbound): {unbound_pred:.2f}")
-            print(f"Predicted average duck score (Non-Unbound): {bound_pred:.2f}")
+        # Print mean predicted scores for all students
+        print(f"Mean predicted duck score (Unbound): {unbound_pred_all.mean():.2f}")
+        print(f"Mean predicted duck score (Non-Unbound): {bound_pred_all.mean():.2f}")
+        #-----------------------------------------------------------------------------  
 else:
     print("No suitable predictor features found for regression analysis.")
