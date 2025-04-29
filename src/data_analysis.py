@@ -225,50 +225,30 @@ if len(predictor_cols) > 0:
         # Perform independent t-test between unbound and bound predicted scores
         t_stat, p_val = ttest_ind(unbound_pred_all, bound_pred_all, equal_var=False)
         print(f"T-test statistic: {t_stat:.4f}")
-        print(f"P-value: {p_val:.4f}")
+        print(f"P-value: {p_val:.4e}")
         if p_val < 0.05:
             print("The difference in predicted duck scores between Unbound and Non-Unbound is statistically significant (p < 0.05).")
         else:
             print("The difference in predicted duck scores is not statistically significant (p >= 0.05).")
 
-        # Perform t-test on predicted scores
-        t_stat_pred, p_val_pred = ttest_ind(unbound_pred_all, bound_pred_all, equal_var=False)
-        print(f"\nT-test on predicted DUCK scores:")
-        print(f"T-test statistic: {t_stat_pred:.4f}")
-        print(f"P-value: {p_val_pred:.4f}")
-        if p_val_pred < 0.05:
-            print("The difference in predicted duck scores between Unbound and Non-Unbound is statistically significant (p < 0.05).")
-        else:
-            print("The difference in predicted duck scores is not statistically significant (p >= 0.05).")
+        from scipy.stats import sem, t
+
+        # Compute confidence interval for difference in predicted means
+        diff_mean = unbound_pred_all.mean() - bound_pred_all.mean()
+        combined_se = np.sqrt(unbound_pred_all.var(ddof=1)/len(unbound_pred_all) + bound_pred_all.var(ddof=1)/len(bound_pred_all))
+        df_combined = len(unbound_pred_all) + len(bound_pred_all) - 2
+        ci_low, ci_high = t.interval(0.95, df_combined, loc=diff_mean, scale=combined_se)
+        print(f"95% Confidence interval for mean difference: ({ci_low:.4f}, {ci_high:.4f})")
 
         # -----------------------------------------------------------------------------  
-        # Statistical comparison of actual and predicted DUCK scores between groups
-        from scipy.stats import ttest_ind
-
-        # Separate actual duck scores for students who took the test
-        actual_duck_scores_unbound = df_train[df_train["UNBOUND"] == "U"][d_cols].mean(axis=1, skipna=True)
-        actual_duck_scores_bound = df_train[df_train["UNBOUND"] != "U"][d_cols].mean(axis=1, skipna=True)
-
-        # Perform t-test on actual scores
-        t_stat_actual, p_val_actual = ttest_ind(actual_duck_scores_unbound, actual_duck_scores_bound, equal_var=False)
-        print(f"\nT-test on actual DUCK scores:")
-        print(f"T-test statistic: {t_stat_actual:.4f}")
-        print(f"P-value: {p_val_actual:.4f}")
-        if p_val_actual < 0.05:
-            print("The difference in actual duck scores between Unbound and Non-Unbound is statistically significant (p < 0.05).")
-        else:
-            print("The difference in actual duck scores is not statistically significant (p >= 0.05).")
-
-        # Compute effect size (Cohen's d)
+        # Statistical comparison of predicted DUCK scores between groups
         def cohens_d(x, y):
             nx, ny = len(x), len(y)
             pooled_std = np.sqrt(((nx - 1)*x.std(ddof=1) + (ny - 1)*y.std(ddof=1)) / (nx + ny - 2))
             return (x.mean() - y.mean()) / pooled_std
 
         d_effect_pred = cohens_d(unbound_pred_all, bound_pred_all)
-        d_effect_actual = cohens_d(actual_duck_scores_unbound, actual_duck_scores_bound)
 
         print(f"\nEffect size (Cohen's d) for predicted scores: {d_effect_pred:.4f}")
-        print(f"Effect size (Cohen's d) for actual scores: {d_effect_actual:.4f}")
 else:
     print("No suitable predictor features found for regression analysis.")
